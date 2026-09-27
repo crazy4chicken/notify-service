@@ -1,63 +1,45 @@
 # notify-service
 
-`notify-service` is a standalone notification gateway in Go for service fleets
-that need one uniform way to reach users. Callers submit a notification intent
-— user id, type, body — and the service owns the rest: resolving the recipient
-through a user directory, choosing a channel by type-based routing, rendering
-the body for that channel, delivering it, and recording the attempt.
+`notify-service` 是一个独立的 Go 通知网关：任何子系统只需提交一条通知意图（用户 id、类型、正文），
+其余都由本服务负责——通过用户目录解析收件地址、按类型路由选择渠道、针对渠道渲染正文、投递并记录结果。
 
-It carries no business vocabulary and no built-in templates: content is supplied
-by the caller, so the same endpoint serves any subsystem.
+它不包含任何业务词汇，也没有内置模板：内容由调用方提供，因此同一个接口可以服务任意子系统。
 
-## Features
+## 功能特性
 
-- One endpoint, `POST /api/v1/notify`. Callers never touch SMTP, phone numbers,
-  or channel quirks.
-- Recipient resolution by user id, from either a local JSON user table or a
-  user-service HTTP contract (`{id}` path template, optional bearer token,
-  explicit 404/502 semantics). No directory configured means a clear 503.
-- Type-based routing with ordered channel preferences
-  (`alert=email,sms;digest=email;default=email`); an explicit `channel` skips
-  routing. Unroutable notifications fail with the reason instead of silently
-  going elsewhere.
-- Two channels. Email delivers over SMTP (implicit TLS, STARTTLS, or plain) with
-  PLAIN/LOGIN auth and per-session timeouts. SMS is a provider interface so an
-  upstream can be dropped in; it reports "not ready" rather than pretending to
-  send.
-- Markdown-first bodies. `bodyFormat` is `text` (default, HTML-escaped only) or
-  `markdown`: email gets an inline-styled HTML shell plus a `text/plain`
-  alternative, SMS gets syntax-stripped plain text. Raw HTML is rejected, and
-  content is escaped before parsing, so caller-supplied text cannot inject tags.
-- Append-only delivery records in JSONL, queryable by channel, type, status, and
-  user id. Failed attempts are recorded with the reason.
-- Configuration exclusively through environment variables (a `.env` file is
-  read when present; real environment variables win). No config API, no
-  database.
-- Optional static bearer token for `/api/*`, permissive CORS for browser
-  clients, panic-recovering middleware, and graceful shutdown.
-- Zero third-party dependencies — Go standard library only — building to a
-  single self-contained binary.
+- 统一入口 `POST /api/v1/notify`。调用方不需要接触 SMTP、手机号或任何渠道细节。
+- 按用户 id 解析收件人，支持本地 JSON 用户表或用户服务 HTTP 契约（`{id}` 路径占位、可选 Bearer
+  Token、明确的 404/502 语义）。未配置用户目录时返回明确的 503。
+- 按通知类型路由，支持有序渠道优先级（`alert=email,sms;digest=email;default=email`）；
+  请求里显式指定 `channel` 则跳过路由。无法路由时返回具体原因，不会静默改发别处。
+- 两个通道。邮件走 SMTP（隐式 TLS、STARTTLS 或明文），支持 PLAIN/LOGIN 认证与会话级超时；
+  短信是 provider 接口，可接入任意上游，未接入时明确报"不可用"，不会假装发送成功。
+- Markdown 优先的正文。`bodyFormat` 取 `text`（默认，仅做 HTML 转义）或 `markdown`：
+  邮件得到内联样式的 HTML 外壳加 `text/plain` 兜底，短信得到去掉语法的纯文本。
+  裸 HTML 会被拒绝，且内容先整体转义再解析，调用方文本无法注入标签。
+- 追加写入的 JSONL 投递记录，可按渠道、类型、状态、用户 id 查询；失败同样记录原因。
+- 配置只来自环境变量（存在 `.env` 时读取，真实环境变量优先）。没有配置接口，没有数据库。
+- `/api/*` 可选静态 Bearer Token；对浏览器客户端开放 CORS；含 panic 恢复中间件与优雅退出。
+- 零第三方依赖——只用 Go 标准库——编译为单个自包含可执行文件。
 
-## Quickstart: local development
+## 本地开发
 
-Copy the environment template and fill in the sender mailbox; without it the
-email channel stays unavailable.
+复制环境变量模板并填好发件邮箱；不填的话邮件通道不可用。
 
 ```sh
-cp .env.example .env      # NOTIFY_SMTP_HOST / _USER / _PASS (an app password)
+cp .env.example .env      # NOTIFY_SMTP_HOST / _USER / _PASS（邮箱授权码）
 go build -o notify-service .
 ./notify-service
 ```
 
-Check the process and the resolved configuration:
+检查进程与解析出的配置：
 
 ```sh
 curl -fsS http://127.0.0.1:8090/healthz
 curl -fsS http://127.0.0.1:8090/api/v1/channels
 ```
 
-`/api/v1/channels` reports each channel's mode and readiness plus the active
-user directory and routing rules. A sample notification:
+`/api/v1/channels` 会报告每个通道的模式与可用性，以及当前生效的用户目录与路由规则。发一条通知：
 
 ```sh
 curl -fsS -X POST http://127.0.0.1:8090/api/v1/notify \
@@ -66,63 +48,59 @@ curl -fsS -X POST http://127.0.0.1:8090/api/v1/notify \
     "user": "u1001",
     "type": "alert",
     "bodyFormat": "markdown",
-    "subject": "Deploy finished",
-    "body": "## Deploy finished\n\n- **v1.2.3** is live\n\n> Rollback command is in the runbook"
+    "subject": "部署完成",
+    "body": "## 部署完成\n\n- 服务 **v1.2.3** 已上线\n\n> 回滚命令见运维手册"
   }'
 ```
 
-Both simulation paths are **off by default**, because a notification that looks
-sent but never leaves the host is worse than a hard failure: enable
-`NOTIFY_DEV_OUTBOX=1` to write email to `data/outbox/*.eml` instead of
-delivering, and `NOTIFY_SMS_SIMULATE=1` to log SMS to `data/outbox/sms.log`.
-Neither switch changes the API.
+两条模拟路径**默认关闭**，因为"看起来发了、实际没出本机"比直接失败更危险：设
+`NOTIFY_DEV_OUTBOX=1` 会把邮件写进 `data/outbox/*.eml` 而不投递，设 `NOTIFY_SMS_SIMULATE=1`
+会把短信写进 `data/outbox/sms.log`。两个开关都不改变 API。
 
-## Configuration
+## 配置
 
-| Variable | Default | Purpose |
+| 变量 | 默认 | 用途 |
 | --- | --- | --- |
-| `NOTIFY_BRAND` | `notify-service` | Mail shell header and default sender display name |
-| `NOTIFY_MAIL_FOOTER` | generated | Mail shell footer line |
-| `NOTIFY_ADDR` | `127.0.0.1:8090` | Listen address; use `0.0.0.0:8090` to expose it |
-| `NOTIFY_DATA_DIR` | `data` | Delivery records, default user table, outbox |
-| `NOTIFY_TOKEN` | empty | When set, `/api/*` requires `Authorization: Bearer <token>` |
-| `NOTIFY_LOG_LEVEL` | `info` | `debug` logs every HTTP request |
-| `NOTIFY_SMTP_HOST` | empty | Sender mailbox SMTP host |
-| `NOTIFY_SMTP_PORT` | `587` | Use `465` for QQ/163-style providers |
-| `NOTIFY_SMTP_TLS` | `auto` | `auto`, `starttls` (587), `implicit` (465), or `none` (local only) |
-| `NOTIFY_SMTP_USER` / `NOTIFY_SMTP_PASS` | empty | Mailbox account and its SMTP app password |
-| `NOTIFY_SMTP_FROM` | `NOTIFY_SMTP_USER` | Envelope sender; most providers require it to match the account |
-| `NOTIFY_SMTP_FROM_NAME` | `NOTIFY_BRAND` | Display name, encoded per RFC 2047 |
-| `NOTIFY_SMTP_TIMEOUT` | `15` | Per-session timeout in seconds |
-| `NOTIFY_USERS_FILE` | `<data>/users.json` | Local user table |
-| `NOTIFY_USER_SERVICE_URL` | empty | User service base URL; takes precedence over the local table |
-| `NOTIFY_USER_SERVICE_PATH` | `/api/users/{id}` | User lookup path; must contain `{id}` |
-| `NOTIFY_USER_SERVICE_TOKEN` | empty | Bearer token for the user service |
-| `NOTIFY_USER_SERVICE_TIMEOUT` | `5` | User service timeout in seconds |
-| `NOTIFY_ROUTES` | `default=email` | Type-to-channel preferences |
-| `NOTIFY_SMS_SIMULATE` | `0` | `1` uses the local simulated SMS upstream |
-| `NOTIFY_DEV_OUTBOX` | `0` | `1` writes email to the outbox instead of delivering |
+| `NOTIFY_BRAND` | `notify-service` | 邮件外壳页眉与默认发件人显示名 |
+| `NOTIFY_MAIL_FOOTER` | 自动生成 | 邮件外壳页脚文案 |
+| `NOTIFY_ADDR` | `127.0.0.1:8090` | 监听地址；`0.0.0.0:8090` 供外部访问 |
+| `NOTIFY_DATA_DIR` | `data` | 投递记录、默认用户表、outbox |
+| `NOTIFY_TOKEN` | 空 | 设置后 `/api/*` 需要 `Authorization: Bearer <token>` |
+| `NOTIFY_LOG_LEVEL` | `info` | 设为 `debug` 会打印每个 HTTP 请求 |
+| `NOTIFY_SMTP_HOST` | 空 | 发件邮箱 SMTP 服务器 |
+| `NOTIFY_SMTP_PORT` | `587` | QQ/163 等用 `465` |
+| `NOTIFY_SMTP_TLS` | `auto` | `auto`、`starttls`(587)、`implicit`(465) 或 `none`(仅本地) |
+| `NOTIFY_SMTP_USER` / `NOTIFY_SMTP_PASS` | 空 | 邮箱账号与它的 SMTP 授权码 |
+| `NOTIFY_SMTP_FROM` | 取 `NOTIFY_SMTP_USER` | 发件地址；多数邮箱要求与账号一致 |
+| `NOTIFY_SMTP_FROM_NAME` | 取 `NOTIFY_BRAND` | 发件人显示名，按 RFC 2047 编码 |
+| `NOTIFY_SMTP_TIMEOUT` | `15` | 单次会话超时（秒） |
+| `NOTIFY_USERS_FILE` | `<data>/users.json` | 本地用户表 |
+| `NOTIFY_USER_SERVICE_URL` | 空 | 用户服务地址；设置后优先于本地用户表 |
+| `NOTIFY_USER_SERVICE_PATH` | `/api/users/{id}` | 用户查询路径，必须含 `{id}` |
+| `NOTIFY_USER_SERVICE_TOKEN` | 空 | 访问用户服务的 Bearer Token |
+| `NOTIFY_USER_SERVICE_TIMEOUT` | `5` | 用户服务超时（秒） |
+| `NOTIFY_ROUTES` | `default=email` | 类型到渠道的优先级 |
+| `NOTIFY_SMS_SIMULATE` | `0` | 设为 `1` 使用本地模拟短信上游 |
+| `NOTIFY_DEV_OUTBOX` | `0` | 设为 `1` 把邮件写进 outbox 而不投递 |
 
-Command-line flags mirror the common settings: `-brand`, `-addr`, `-data`,
-`-token`, and `-log-level`.
+命令行参数覆盖常用项：`-brand`、`-addr`、`-data`、`-token`、`-log-level`。
 
 ## API
 
-| Method | Path | Description |
+| 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/v1/notify` | Send a notification |
-| `GET` | `/api/v1/channels` | Channel status, user directory, routing rules |
-| `POST` | `/api/v1/channels/email/verify` | Send a self-test mail to `{"to":["me@example.com"]}` |
-| `GET` | `/api/v1/notifications` | Delivery records; `?limit=&channel=&type=&status=&userId=` |
-| `GET` | `/api/v1/notifications/{id}` | Single delivery record |
-| `GET` | `/healthz` | Liveness check; no token required |
+| `POST` | `/api/v1/notify` | 发送通知 |
+| `GET` | `/api/v1/channels` | 通道状态、用户目录、路由规则 |
+| `POST` | `/api/v1/channels/email/verify` | 发一封自检邮件，`{"to":["me@example.com"]}` |
+| `GET` | `/api/v1/notifications` | 投递记录；`?limit=&channel=&type=&status=&userId=` |
+| `GET` | `/api/v1/notifications/{id}` | 单条投递记录 |
+| `GET` | `/healthz` | 存活检查，无需 Token |
 
-The send endpoint accepts exactly one recipient form: `user` (resolved by the
-service) or `to` / `target` (an explicit address). Supplying both is a 400.
-`target` additionally accepts the shorthand forms `"a@example.com"` and
-`["a@example.com","b@example.com"]`, or `{"channel":"sms","to":["138…"]}`.
+发送接口只接受一种收件人形式：`user`（由本服务解析）或 `to` / `target`（显式地址），
+同时提供会返回 400。`target` 还接受简写 `"a@example.com"`、`["a@example.com","b@example.com"]`
+以及 `{"channel":"sms","to":["138…"]}`。
 
-Responses report the delivery attempt:
+响应就是投递结果：
 
 ```json
 {
@@ -131,73 +109,67 @@ Responses report the delivery attempt:
     "id": "ntf_3f9c1a7b2d5e4c80",
     "channel": "email", "provider": "smtp", "status": "sent",
     "type": "alert", "bodyFormat": "markdown",
-    "userId": "u1001", "userName": "Zhang San",
-    "to": ["zhangsan@example.com"], "subject": "Deploy finished",
-    "detail": "delivered via smtp.example.com:465", "durationMs": 812
+    "userId": "u1001", "userName": "张三",
+    "to": ["zhangsan@example.com"], "subject": "部署完成",
+    "detail": "已投递至 smtp.example.com:465", "durationMs": 812
   }
 }
 ```
 
-Errors are uniform — `{"error":{"kind":"…","message":"…"}}`:
+错误统一为 `{"error":{"kind":"…","message":"…"}}`：
 
-| Kind | HTTP | Meaning |
+| kind | HTTP | 含义 |
 | --- | --- | --- |
-| `invalid_request` | 400 | Malformed parameters, both recipient forms, raw HTML in a Markdown body |
-| `not_found` | 404 | Unknown channel or record, or the user has no address on the route |
-| `channel_not_ready` | 503 | Channel not configured, no usable channel on the route, no user directory |
-| `upstream_failed` | 502 | User service failed or returned an unusable payload |
-| `delivery_failed` | 502 | SMTP rejected or unreachable |
+| `invalid_request` | 400 | 参数非法、两种收件人形式同时出现、Markdown 正文含裸 HTML |
+| `not_found` | 404 | 通道或记录不存在，或用户在该路由上没有收件地址 |
+| `channel_not_ready` | 503 | 通道未配置、路由没有可用通道、未配置用户目录 |
+| `upstream_failed` | 502 | 用户服务出错或返回不可用的数据 |
+| `delivery_failed` | 502 | SMTP 拒收或无法连通 |
 
-### Body format
+### 正文格式
 
-| `bodyFormat` | Behaviour |
+| `bodyFormat` | 行为 |
 | --- | --- |
-| `text` (default) | No Markdown parsing; HTML-escaped, preserving legacy callers |
-| `markdown` | Parsed and rendered per channel |
+| `text`（默认） | 不解析 Markdown，只做 HTML 转义，兼容既有调用方 |
+| `markdown` | 解析后按渠道渲染 |
 
-Markdown support is the notification-sized subset: headings, bold, italics,
-inline code, links, ordered and unordered lists, blockquotes, thematic breaks,
-and fenced code blocks. Only `http`, `https`, and `mailto` links are allowed.
-A raw HTML tag in a Markdown body is rejected with 400 — put it in a code span
-if it must appear literally. The removed `html` and `markdown` fields return an
-explicit 400 telling the caller what to use instead.
+Markdown 支持通知场景够用的子集：标题、粗体、斜体、行内代码、链接、有序与无序列表、引用、
+分割线、围栏代码块。链接只放行 `http`、`https`、`mailto`。Markdown 正文里出现裸 HTML 标签会
+直接 400，需要原样展示就放进行内代码；已移除的 `html` 与 `markdown` 字段会返回明确的 400，
+告诉调用方该改用什么。
 
-## User directory
+## 用户目录
 
-Two interchangeable implementations; the user service wins when both are set.
+两种可互换的实现；两者都配置时用户服务优先。
 
-The local table (reloaded when the file changes) is a JSON object or array:
+本地用户表（文件变更后自动重载）是 JSON 对象或数组：
 
 ```json
 {
   "users": [
-    {"id": "u1001", "name": "Zhang San", "channels": {"email": "zhangsan@example.com", "sms": "13800000000"}}
+    {"id": "u1001", "name": "张三", "channels": {"email": "zhangsan@example.com", "sms": "13800000000"}}
   ]
 }
 ```
 
-The user service must answer `GET {URL}{PATH}` with `200` and a user object:
+用户服务需要响应 `GET {URL}{PATH}`，返回 `200` 与用户对象：
 
 ```json
-{"id": "u1001", "name": "Zhang San", "channels": {"email": "zhangsan@example.com", "sms": "13800000000"}}
+{"id": "u1001", "name": "张三", "channels": {"email": "zhangsan@example.com", "sms": "13800000000"}}
 ```
 
-Addresses may also be flattened to `email` / `sms` / `phone` at the top level.
-`404` means "no such user"; any other non-2xx, malformed payload, or mismatched
-`id` is treated as an upstream failure so a wrong integration cannot misdeliver.
+地址也允许平铺在顶层：`email` / `sms` / `phone`。`404` 表示用户不存在；其它非 2xx、
+非法响应体、或返回的 `id` 与请求不一致，都按上游故障处理，避免接错接口后误发。
 
-## Routing
+## 路由
 
-`NOTIFY_ROUTES` maps a notification type to an ordered preference list. For each
-candidate the service checks that the user has an address for that channel *and*
-that the channel is ready, then uses the first match. Types without a rule fall
-back to `default`. An explicit `channel` on the request bypasses routing
-entirely — and fails rather than switching channels silently.
+`NOTIFY_ROUTES` 把通知类型映射成有序的渠道优先级。对每个候选渠道，本服务会检查用户是否有该
+渠道的地址、以及该通道是否就绪，取第一个满足的渠道。没有配规则的类型回落到 `default`。
+请求里显式指定 `channel` 则完全绕过路由——并且在不可用时直接失败，而不是悄悄换渠道。
 
-## Delivery records
+## 发送记录
 
-Every attempt is appended to `data/notifications.jsonl` and the most recent 5000
-are kept in memory for queries. Records carry `status` `sent` (actually
-delivered), `simulated` (written locally, never delivered), or `failed`, plus
-the `userId`, `userName`, resolved channel, and the error for failures — enough
-to answer "what was sent, to whom, and why it did not go out".
+每次尝试都会追加到 `data/notifications.jsonl`，内存保留最近 5000 条用于查询。记录里的
+`status` 为 `sent`（真实投递）、`simulated`（只写本地、未投递）或 `failed`，并带着
+`userId`、`userName`、最终选中的渠道，失败时还有错误原因——足以回答"发了什么、发给了谁、
+为什么没发出去"。
