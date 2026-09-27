@@ -90,8 +90,8 @@ const (
 //   - User（推荐）：其它服务只给 user id，由通知服务自己解析地址并决定渠道；
 //   - To / Target：直接给地址，用于测试或确有明确地址的场合。
 //
-// 正文只有一个来源：Body（配合 BodyFormat），或者由 Template + Data 生成。
-// 正文统一按 Markdown 的思路处理——email 通道渲染成 HTML（带 text/plain 兜底），
+// 正文只有一个来源：Body（配合 BodyFormat）。内容由调用方提供，
+// 本服务不认识任何业务格式——email 通道渲染成 HTML（带 text/plain 兜底），
 // sms 通道渲染成去掉语法的纯文本；bodyFormat=text 时不做 Markdown 解析，只做转义。
 type Message struct {
 	User       string            `json:"user,omitempty"`
@@ -102,8 +102,6 @@ type Message struct {
 	Subject    string            `json:"subject,omitempty"`
 	Body       string            `json:"body,omitempty"`
 	BodyFormat BodyFormat        `json:"bodyFormat,omitempty"`
-	Template   string            `json:"template,omitempty"`
-	Data       map[string]any    `json:"data,omitempty"`
 	Meta       map[string]string `json:"meta,omitempty"`
 
 	// resolved 由服务内部在"地址已从用户目录解析出来"后置位：
@@ -123,7 +121,6 @@ func (m *Message) Normalize() {
 	}
 	m.Channel = Channel(strings.ToLower(strings.TrimSpace(string(m.Channel))))
 	m.Subject = strings.TrimSpace(m.Subject)
-	m.Template = strings.TrimSpace(m.Template)
 	m.Type = strings.ToLower(strings.TrimSpace(m.Type))
 	m.BodyFormat = BodyFormat(strings.ToLower(strings.TrimSpace(string(m.BodyFormat))))
 
@@ -158,11 +155,11 @@ func (m Message) PreValidate() error {
 	default:
 		return Invalidf("bodyFormat 只能是 text 或 markdown，收到 %q", m.BodyFormat)
 	}
-	if strings.TrimSpace(m.Body) == "" && m.Template == "" {
-		return Invalidf("正文不能为空：直接给 body（配 bodyFormat），或用 template + data 生成")
+	if strings.TrimSpace(m.Body) == "" {
+		return Invalidf("正文不能为空：请在 body 里给出内容（bodyFormat 说明它是 text 还是 markdown）")
 	}
 	// 渲染器不解释裸 HTML（整体转义），这里让调用方早点发现自己用错了格式。
-	if m.BodyFormat == BodyFormatMarkdown && strings.TrimSpace(m.Template) == "" {
+	if m.BodyFormat == BodyFormatMarkdown {
 		if snippet, found := ContainsRawHTML(m.Body); found {
 			return Invalidf("正文里检测到裸 HTML %q：请改用 Markdown 语法，或把这段放进代码块（反引号）里", snippet)
 		}
@@ -202,7 +199,7 @@ func validateType(kind string) error {
 	}
 	for _, r := range kind {
 		if r <= ' ' || r == 0x7f {
-			return Invalidf("type %q 不能包含空白或控制字符（建议用 absence、head-up-rate 这类写法）", kind)
+			return Invalidf("type %q 不能包含空白或控制字符（建议用 alert、system 这类写法）", kind)
 		}
 	}
 	return nil

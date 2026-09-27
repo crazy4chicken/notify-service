@@ -17,9 +17,9 @@ func TestRenderMarkdown(t *testing.T) {
 	}{
 		{
 			name:     "标题与粗体",
-			src:      "# 缺勤告警\n\n本班 **3 人** 缺勤",
-			wantHTML: []string{"<h1>缺勤告警</h1>", "<strong>3 人</strong>", "<p>本班 "},
-			wantText: "缺勤告警\n本班 3 人 缺勤",
+			src:      "# 部署完成\n\n本次发布 **3 个** 服务",
+			wantHTML: []string{"<h1>部署完成</h1>", "<strong>3 个</strong>", "<p>本次发布 "},
+			wantText: "部署完成\n本次发布 3 个 服务",
 		},
 		{
 			name:     "斜体不误伤下划线标识符",
@@ -36,9 +36,9 @@ func TestRenderMarkdown(t *testing.T) {
 		},
 		{
 			name:     "引用与分割线",
-			src:      "> 抬头率偏低\n\n---",
-			wantHTML: []string{"<blockquote", "抬头率偏低</blockquote>", "<hr>"},
-			wantText: "抬头率偏低\n----------",
+			src:      "> 磁盘使用率偏高\n\n---",
+			wantHTML: []string{"<blockquote", "磁盘使用率偏高</blockquote>", "<hr>"},
+			wantText: "磁盘使用率偏高\n----------",
 		},
 		{
 			name:     "代码块内容不会被解析成标签",
@@ -70,9 +70,9 @@ func TestRenderMarkdown(t *testing.T) {
 		},
 		{
 			name:     "正常链接保留",
-			src:      "[考勤表](https://example.com/report?a=1&b=2)",
-			wantHTML: []string{`<a href="https://example.com/report?a=1&amp;b=2">考勤表</a>`},
-			wantText: "考勤表",
+			src:      "[运行报表](https://example.com/report?a=1&b=2)",
+			wantHTML: []string{`<a href="https://example.com/report?a=1&amp;b=2">运行报表</a>`},
+			wantText: "运行报表",
 		},
 		{
 			name:     "空内容返回空",
@@ -177,7 +177,7 @@ func TestMessageNormalizeMergesTarget(t *testing.T) {
 
 // type 里出现空白/控制字符会被拒，避免记录被写乱。
 func TestValidateType(t *testing.T) {
-	ok := []string{"", "absence", "head-up-rate", "系统告警"}
+	ok := []string{"", "alert", "system", "系统告警"}
 	for _, kind := range ok {
 		if err := validateType(kind); err != nil {
 			t.Errorf("%q 应通过，实际 %v", kind, err)

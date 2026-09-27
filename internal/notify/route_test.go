@@ -12,10 +12,10 @@ func TestParseRoutes(t *testing.T) {
 		want map[string]string // type → "email,sms"
 	}{
 		{spec: "", want: map[string]string{"default": "email"}},
-		{spec: "absence=email,sms;head-up-rate=email", want: map[string]string{
-			"absence": "email/sms", "head-up-rate": "email", "default": "email",
+		{spec: "alert=email,sms;digest=email", want: map[string]string{
+			"alert": "email/sms", "digest": "email", "default": "email",
 		}},
-		{spec: "Absence=EMAIL", want: map[string]string{"absence": "email", "default": "email"}},
+		{spec: "Alert=EMAIL", want: map[string]string{"alert": "email", "default": "email"}},
 		{spec: "default=sms", want: map[string]string{"default": "sms"}},
 		{spec: "a=email;;b=sms", want: map[string]string{"a": "email", "b": "sms", "default": "email"}},
 	}
@@ -32,7 +32,7 @@ func TestParseRoutes(t *testing.T) {
 		}
 	}
 
-	for _, bad := range []string{"absence", "absence=", "=email"} {
+	for _, bad := range []string{"alert", "alert=", "=email"} {
 		if _, err := ParseRoutes(bad); err == nil {
 			t.Errorf("%q 应解析失败", bad)
 		}
@@ -40,17 +40,17 @@ func TestParseRoutes(t *testing.T) {
 }
 
 func TestRouteCandidatesFallback(t *testing.T) {
-	table, err := ParseRoutes("absence=sms,email")
+	table, err := ParseRoutes("alert=sms,email")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := joinChannels(table.Candidates("head-up-rate")); got != "email" {
+	if got := joinChannels(table.Candidates("digest")); got != "email" {
 		t.Errorf("未配类型的通知应走 default=email，实际 %q", got)
 	}
 	if got := joinChannels(table.Candidates("")); got != "email" {
 		t.Errorf("type 为空应走 default，实际 %q", got)
 	}
-	if got := joinChannels(table.Candidates("ABSENCE")); got != "sms/email" {
+	if got := joinChannels(table.Candidates("ALERT")); got != "sms/email" {
 		t.Errorf("类型匹配应忽略大小写，实际 %q", got)
 	}
 }
@@ -103,23 +103,19 @@ func (f *fakeResolver) Resolve(_ context.Context, userID string) (User, error) {
 	return user, nil
 }
 
-func newTestService(t *testing.T, routes string, resolver Resolver, notifiers ...Notifier) (*Service, *Templates) {
+func newTestService(t *testing.T, routes string, resolver Resolver, notifiers ...Notifier) *Service {
 	t.Helper()
-	templates, err := NewTemplates()
-	if err != nil {
-		t.Fatal(err)
-	}
 	table, err := ParseRoutes(routes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(nil, templates, resolver, table, nil)
+	svc := NewService(nil, resolver, table, nil)
 	for _, n := range notifiers {
 		if err := svc.Register(n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return svc, templates
+	return svc
 }
 
 func TestSendRoutesUserToEmail(t *testing.T) {
@@ -128,10 +124,10 @@ func TestSendRoutesUserToEmail(t *testing.T) {
 	resolver := &fakeResolver{users: map[string]User{
 		"u1001": {ID: "u1001", Name: "张三", Channels: map[string]string{"email": "zhangsan@example.com"}},
 	}}
-	svc, _ := newTestService(t, "absence=email,sms", resolver, email, sms)
+	svc := newTestService(t, "alert=email,sms", resolver, email, sms)
 
 	rec, err := svc.Send(context.Background(), Message{
-		User: "u1001", Type: "absence", Body: "本班 **3 人** 缺勤", BodyFormat: BodyFormatMarkdown,
+		User: "u1001", Type: "alert", Body: "本次发布 **3 个** 服务", BodyFormat: BodyFormatMarkdown,
 	})
 	if err != nil {
 		t.Fatalf("发送失败: %v", err)
@@ -154,9 +150,9 @@ func TestSendRouteFallsBackWhenChannelUnavailable(t *testing.T) {
 	resolver := &fakeResolver{users: map[string]User{
 		"u1": {ID: "u1", Channels: map[string]string{"email": "a@qq.com", "sms": "13800000000"}},
 	}}
-	svc, _ := newTestService(t, "absence=sms,email", resolver, email, sms)
+	svc := newTestService(t, "alert=sms,email", resolver, email, sms)
 
-	rec, err := svc.Send(context.Background(), Message{User: "u1", Type: "absence", Body: "缺勤 2 人"})
+	rec, err := svc.Send(context.Background(), Message{User: "u1", Type: "alert", Body: "服务已重启"})
 	if err != nil {
 		t.Fatalf("应回退到邮件，实际报错: %v", err)
 	}
@@ -171,9 +167,9 @@ func TestSendRouteNoUsableChannel(t *testing.T) {
 	resolver := &fakeResolver{users: map[string]User{
 		"u1": {ID: "u1", Channels: map[string]string{"sms": "13800000000"}},
 	}}
-	svc, _ := newTestService(t, "absence=sms", resolver, sms)
+	svc := newTestService(t, "alert=sms", resolver, sms)
 
-	_, err := svc.Send(context.Background(), Message{User: "u1", Type: "absence", Body: "x"})
+	_, err := svc.Send(context.Background(), Message{User: "u1", Type: "alert", Body: "x"})
 	var nerr *Error
 	if !errors.As(err, &nerr) || nerr.Kind != KindNotReady {
 		t.Fatalf("应返回 channel_not_ready，实际 %v", err)
@@ -186,7 +182,7 @@ func TestSendRouteUserMissingAddress(t *testing.T) {
 	resolver := &fakeResolver{users: map[string]User{
 		"u1": {ID: "u1", Channels: map[string]string{"sms": "13800000000"}},
 	}}
-	svc, _ := newTestService(t, "default=email", resolver, email)
+	svc := newTestService(t, "default=email", resolver, email)
 
 	_, err := svc.Send(context.Background(), Message{User: "u1", Body: "x"})
 	var nerr *Error
@@ -202,7 +198,7 @@ func TestSendExplicitChannelSkipsRouting(t *testing.T) {
 	resolver := &fakeResolver{users: map[string]User{
 		"u1": {ID: "u1", Channels: map[string]string{"email": "a@qq.com", "sms": "13800000000"}},
 	}}
-	svc, _ := newTestService(t, "default=email", resolver, email, sms)
+	svc := newTestService(t, "default=email", resolver, email, sms)
 
 	rec, err := svc.Send(context.Background(), Message{User: "u1", Channel: ChannelSMS, Body: "x"})
 	if err != nil {
@@ -220,7 +216,7 @@ func TestSendExplicitChannelSkipsRouting(t *testing.T) {
 
 func TestSendRejectsUserWithAddress(t *testing.T) {
 	email := &fakeNotifier{name: ChannelEmail, ready: true}
-	svc, _ := newTestService(t, "", &fakeResolver{}, email)
+	svc := newTestService(t, "", &fakeResolver{}, email)
 
 	_, err := svc.Send(context.Background(), Message{User: "u1", To: []string{"a@qq.com"}, Body: "x"})
 	var nerr *Error
@@ -231,7 +227,7 @@ func TestSendRejectsUserWithAddress(t *testing.T) {
 
 func TestSendRequiresDirectory(t *testing.T) {
 	email := &fakeNotifier{name: ChannelEmail, ready: true}
-	svc, _ := newTestService(t, "", nil, email)
+	svc := newTestService(t, "", nil, email)
 
 	_, err := svc.Send(context.Background(), Message{User: "u1", Body: "x"})
 	var nerr *Error
@@ -242,7 +238,7 @@ func TestSendRequiresDirectory(t *testing.T) {
 
 func TestSendDirectAddressStillWorks(t *testing.T) {
 	email := &fakeNotifier{name: ChannelEmail, ready: true}
-	svc, _ := newTestService(t, "", nil, email)
+	svc := newTestService(t, "", nil, email)
 
 	rec, err := svc.Send(context.Background(), Message{Target: &Target{To: []string{"a@qq.com"}}, Body: "x"})
 	if err != nil {

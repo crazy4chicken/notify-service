@@ -9,7 +9,7 @@ import (
 // RouteTable 决定"某类型的通知优先走哪些渠道"。这是通知服务自己的策略，
 // 调用方只给 type，不需要关心走邮件还是短信。
 //
-// 配置形如：`absence=email,sms;head-up-rate=email;default=email`
+// 配置形如：`alert=email,sms;digest=email;default=email`
 // 没有命中类型的规则时用 default；default 缺失时兜底为 email。
 type RouteTable struct {
 	rules map[string][]Channel

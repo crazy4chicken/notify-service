@@ -1,7 +1,8 @@
-// notify-service 是课堂状态监控系统的统一通知服务。
+// notify-service 是一个通用的多通道通知服务。
 //
-// 调用方（其它子系统）只给三样东西：user（用户 id）、type（通知类型）、内容；
-// 具体发到哪个渠道、哪个地址，由本服务通过用户目录解析 + 路由规则自己决定。
+// 它不认识任何业务流程：调用方（任意子系统）只给三样东西——
+// user（用户 id）、type（通知类型）、body（正文）；
+// 发到哪个渠道、哪个地址，由本服务通过用户目录解析 + 路由规则自己决定。
 //
 // 所有配置都来自环境变量（可用同目录的 .env 文件，已在 .gitignore 中排除）。
 package main
@@ -29,7 +30,7 @@ import (
 	"notify-service/internal/store"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if err := run(); err != nil {
@@ -47,6 +48,7 @@ func run() error {
 	}
 
 	var (
+		brand    = flag.String("brand", envStr("NOTIFY_BRAND", channel.DefaultBrand), "服务/邮件品牌名，用于邮件外壳页眉与发件人显示名")
 		addr     = flag.String("addr", envStr("NOTIFY_ADDR", "127.0.0.1:8090"), "HTTP 监听地址")
 		dataDir  = flag.String("data", envStr("NOTIFY_DATA_DIR", "data"), "数据目录：发送记录、outbox、默认用户表")
 		webDir   = flag.String("web", envStr("NOTIFY_WEB_DIR", "web"), "测试页面目录（内含 index.html），留空则关闭")
@@ -77,17 +79,12 @@ func run() error {
 		logger.Warn("加载历史记录时跳过了损坏行", "skippedLines", skipped)
 	}
 
-	templates, err := notify.NewTemplates()
-	if err != nil {
-		return fmt.Errorf("编译内置模板失败: %w", err)
-	}
-
 	// 邮件通道：配置全部来自环境变量；未配置时若要本地演示，需显式开 NOTIFY_DEV_OUTBOX=1。
 	outbox := ""
 	if envBool("NOTIFY_DEV_OUTBOX", false) {
 		outbox = filepath.Join(absData, "outbox")
 	}
-	emailNotifier := channel.NewEmailNotifier(environmentSMTP(), outbox, logger)
+	emailNotifier := channel.NewEmailNotifier(environmentSMTP(*brand), outbox, logger)
 
 	// 短信通道：未接入真实上游时明确不可用，除非显式开 NOTIFY_SMS_SIMULATE=1 用模拟上游。
 	var smsProvider channel.SMSProvider
@@ -113,7 +110,7 @@ func run() error {
 		return fmt.Errorf("NOTIFY_ROUTES 无效: %w", err)
 	}
 
-	svc := notify.NewService(records, templates, resolver, routes, logger)
+	svc := notify.NewService(records, resolver, routes, logger)
 	if err := svc.Register(emailNotifier); err != nil {
 		return err
 	}
@@ -143,8 +140,8 @@ func run() error {
 		WriteTimeout:      60 * time.Second,
 	}
 
-	logger.Info("通知服务已启动",
-		"version", version, "addr", *addr, "dataDir", absData)
+	logger.Info("服务已启动",
+		"version", version, "brand", *brand, "addr", *addr, "dataDir", absData)
 	logger.Info("路由规则（type → 渠道顺序）", "routes", routes.String())
 	if resolver != nil {
 		logger.Info("用户目录", "resolver", resolver.Describe())
@@ -165,7 +162,7 @@ func run() error {
 	if *token != "" {
 		logger.Info("已开启 API 鉴权：请求需带 Authorization: Bearer <token>")
 	}
-	logger.Info(`调用示例：POST /api/v1/notify {"user":"u1001","type":"absence","bodyFormat":"markdown","subject":"缺勤告警","body":"## 考勤异常\n\n- 张三\n- 李四"}`)
+	logger.Info(`调用示例：POST /api/v1/notify {"user":"u1001","type":"alert","bodyFormat":"markdown","subject":"部署完成","body":"## 部署完成\n\n- 服务 **v1.2.3** 已上线"}`)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -196,16 +193,18 @@ func run() error {
 }
 
 // environmentSMTP 从环境变量读取发件邮箱配置。
-func environmentSMTP() channel.EmailConfig {
+func environmentSMTP(brand string) channel.EmailConfig {
 	return channel.EmailConfig{
 		Host:        envStr("NOTIFY_SMTP_HOST", ""),
 		Port:        envInt("NOTIFY_SMTP_PORT", 0),
 		Username:    envStr("NOTIFY_SMTP_USER", ""),
 		Password:    envStr("NOTIFY_SMTP_PASS", ""),
 		From:        envStr("NOTIFY_SMTP_FROM", ""),
-		FromName:    envStr("NOTIFY_SMTP_FROM_NAME", "课堂状态监控系统"),
+		FromName:    envStr("NOTIFY_SMTP_FROM_NAME", ""),
 		TLS:         envStr("NOTIFY_SMTP_TLS", ""),
 		TimeoutSecs: envInt("NOTIFY_SMTP_TIMEOUT", 0),
+		Brand:       brand,
+		Footer:      envStr("NOTIFY_MAIL_FOOTER", ""),
 	}
 }
 

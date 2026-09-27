@@ -68,7 +68,6 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /api/v1/channels", s.handleChannels)
-	mux.HandleFunc("GET /api/v1/templates", s.handleTemplates)
 	mux.HandleFunc("POST /api/v1/notify", s.handleNotify)
 	mux.HandleFunc("GET /api/v1/notifications", s.handleListNotifications)
 	mux.HandleFunc("GET /api/v1/notifications/{id}", s.handleGetNotification)
@@ -105,10 +104,6 @@ func (s *Server) handleChannels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"templates": s.svc.Templates()})
-}
-
 type notifyRequest struct {
 	User       string            `json:"user"`
 	Channel    string            `json:"channel"`
@@ -118,8 +113,6 @@ type notifyRequest struct {
 	Subject    string            `json:"subject"`
 	Body       string            `json:"body"`
 	BodyFormat string            `json:"bodyFormat"`
-	Template   string            `json:"template"`
-	Data       map[string]any    `json:"data"`
 	Meta       map[string]string `json:"meta"`
 
 	// 已移除的字段保留成指针，只为给出明确的 400，而不是被当成未知字段或静默忽略。
@@ -127,7 +120,7 @@ type notifyRequest struct {
 	Markdown *string `json:"markdown"`
 }
 
-// validateBody 保证正文只有一个来源：Body（+ bodyFormat）或 Template+Data。
+// validateBody 保证正文只有一个来源：Body（+ bodyFormat）。
 func (r notifyRequest) validateBody() error {
 	if r.HTML != nil {
 		return notify.Invalidf("html 字段已移除：正文统一为 Markdown 单源，请改用 body + \"bodyFormat\":\"markdown\"")
@@ -137,9 +130,6 @@ func (r notifyRequest) validateBody() error {
 	}
 	if r.BodyFormat != "" && r.BodyFormat != string(notify.BodyFormatText) && r.BodyFormat != string(notify.BodyFormatMarkdown) {
 		return notify.Invalidf("bodyFormat 只能是 text 或 markdown，收到 %q", r.BodyFormat)
-	}
-	if r.Body != "" && r.Template != "" {
-		return notify.Invalidf("body 与 template 不能同时使用：正文要么直接给 body，要么用 template + data 生成")
 	}
 	return nil
 }
@@ -163,8 +153,6 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		Subject:    req.Subject,
 		Body:       req.Body,
 		BodyFormat: notify.BodyFormat(req.BodyFormat),
-		Template:   req.Template,
-		Data:       req.Data,
 		Meta:       req.Meta,
 	})
 	if err != nil {

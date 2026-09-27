@@ -8,7 +8,7 @@ import (
 
 // bodyFormat 决定正文怎么解释：不写按纯文本（兼容旧调用），模板产出的是 Markdown。
 func TestBodyFormatDefaults(t *testing.T) {
-	msg := Message{Body: "抬头率 < 60% 需要提醒"}
+	msg := Message{Body: "磁盘使用率 < 60% 无需处理"}
 	msg.Normalize()
 	if msg.BodyFormat != "" {
 		t.Fatalf("Normalize 不应替调用方决定格式，实际 %q", msg.BodyFormat)
@@ -36,11 +36,11 @@ func TestMarkdownRawHTMLRejected(t *testing.T) {
 		body    string
 		wantErr bool
 	}{
-		{body: "<div>考勤异常</div>", wantErr: true},
-		{body: "抬头率 **42%**\n\n<img src=\"x.png\">", wantErr: true},
+		{body: "<div>部署完成</div>", wantErr: true},
+		{body: "磁盘 **42%**\n\n<img src=\"x.png\">", wantErr: true},
 		{body: "看这个例子：`<div>` 会被转义显示", wantErr: false},
 		{body: "```html\n<div>示例</div>\n```", wantErr: false},
-		{body: "抬头率 < 60% 时提醒", wantErr: false},
+		{body: "磁盘 < 60% 时提醒", wantErr: false},
 		{body: "参考 <https://example.com/report>", wantErr: false},
 		{body: "## 正常 Markdown\n\n- 列表项", wantErr: false},
 	}
@@ -57,16 +57,18 @@ func TestMarkdownRawHTMLRejected(t *testing.T) {
 	}
 }
 
-func TestPreValidateRequiresBodyOrTemplate(t *testing.T) {
+func TestPreValidateRequiresBody(t *testing.T) {
 	msg := Message{}
 	msg.Normalize()
 	if err := msg.PreValidate(); err == nil {
-		t.Fatal("既没有 body 也没有 template 应报错")
+		t.Fatal("没有正文应报错")
 	}
-	withTemplate := Message{Template: "absence-alert", Data: map[string]any{}}
-	withTemplate.Normalize()
-	if err := withTemplate.PreValidate(); err != nil {
-		t.Fatalf("只用模板时正文由模板生成，不应报错: %v", err)
+
+	// 正文由调用方提供：长度上限、CRLF 等规则在 Validate 里继续生效。
+	tooLong := Message{Body: strings.Repeat("x", 1<<20+1)}
+	tooLong.Normalize()
+	if err := tooLong.Validate(); err == nil {
+		t.Fatal("超长正文应报错")
 	}
 }
 
@@ -83,36 +85,4 @@ func TestTextToHTML(t *testing.T) {
 	if got := TextToHTML("   \n\n "); got != "" {
 		t.Errorf("空内容应返回空，实际 %q", got)
 	}
-}
-
-// 模板产出 Markdown，渲染后邮件里应是 HTML 结构。
-func TestTemplateProducesMarkdown(t *testing.T) {
-	templates, err := NewTemplates()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rendered, err := templates.Render("absence-alert", map[string]any{
-		"ClassName": "计算机2301班", "CourseName": "大数据采集", "TimeRange": "08:00-09:40",
-		"StudentNames": "张三、李四", "AbsentCount": 2, "TotalCount": 46,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(rendered.Markdown, "## ") {
-		t.Errorf("模板正文应是 Markdown，实际 %q", rendered.Markdown[:min(20, len(rendered.Markdown))])
-	}
-	html, text := RenderMarkdown(rendered.Markdown)
-	if !strings.Contains(html, "<h2>") || !strings.Contains(html, "<strong>") {
-		t.Errorf("Markdown 应渲染出标题与粗体: %s", html)
-	}
-	if strings.Contains(text, "**") || strings.Contains(text, "##") {
-		t.Errorf("纯文本版本应去掉语法标记: %s", text)
-	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

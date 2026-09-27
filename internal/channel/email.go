@@ -35,22 +35,25 @@ const (
 
 const devFrom = "notify-dev@localhost"
 
-// 邮件外壳文案。邮件客户端普遍会剥掉 <style>，所以外壳样式必须内联。
-const (
-	emailBrand  = "课堂状态监控系统"
-	emailFooter = "本邮件由课堂状态监控系统自动发送，请勿直接回复。"
-)
+// DefaultBrand 是邮件外壳页眉与默认发件人显示名的兜底值，可用 NOTIFY_BRAND 覆盖。
+const DefaultBrand = "notify-service"
 
-// emailShell 把正文片段套成完整邮件：浅灰底 + 白色卡片 + 页眉页脚。
-func emailShell(fragment string) string {
+// emailShell 把正文片段套成完整邮件：浅灰底 + 白色卡片 + 页眉页脚（品牌可配置）。
+// 邮件客户端普遍会剥掉 <style>，所以外壳样式必须内联。
+func emailShell(fragment, brand, footer string) string {
 	// 注意用单引号：整段 style 已经用双引号包住，里面再用双引号会把属性截断。
 	const font = `font-family:-apple-system,'Segoe UI','Microsoft YaHei',sans-serif`
 	return `<div style="margin:0;padding:24px 12px;background:#f4f6f9">` +
 		`<div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e6e9ef;border-radius:12px;overflow:hidden">` +
-		`<div style="padding:14px 24px;background:#1f2430;color:#ffffff;` + font + `;font-size:15px;font-weight:600">` + emailBrand + `</div>` +
+		`<div style="padding:14px 24px;background:#1f2430;color:#ffffff;` + font + `;font-size:15px;font-weight:600">` + escapeShellText(brand) + `</div>` +
 		`<div style="padding:20px 24px;color:#222222;` + font + `;font-size:14px;line-height:1.75">` + fragment + `</div>` +
-		`<div style="padding:12px 24px;background:#fafbfd;color:#8a909c;` + font + `;font-size:12px">` + emailFooter + `</div>` +
+		`<div style="padding:12px 24px;background:#fafbfd;color:#8a909c;` + font + `;font-size:12px">` + escapeShellText(footer) + `</div>` +
 		`</div></div>`
+}
+
+// escapeShellText 转义来自配置的文案，避免品牌名里的字符破坏外壳结构。
+func escapeShellText(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(s)
 }
 
 // EmailConfig 是发件邮箱的全部配置，字段与 NOTIFY_SMTP_* 环境变量一一对应。
@@ -63,6 +66,11 @@ type EmailConfig struct {
 	FromName    string
 	TLS         string
 	TimeoutSecs int
+
+	// Brand 显示在邮件外壳页眉，同时也是发件人显示名的兜底值。
+	Brand string
+	// Footer 是邮件外壳页脚的提示语，留空则按 Brand 生成。
+	Footer string
 }
 
 // WithDefaults 补齐缺省值，方便 main 里只写关心的几项。
@@ -83,6 +91,17 @@ func (c EmailConfig) WithDefaults() EmailConfig {
 	}
 	if c.TimeoutSecs <= 0 {
 		c.TimeoutSecs = 15
+	}
+	c.Brand = strings.TrimSpace(c.Brand)
+	if c.Brand == "" {
+		c.Brand = DefaultBrand
+	}
+	c.Footer = strings.TrimSpace(c.Footer)
+	if c.Footer == "" {
+		c.Footer = "本邮件由 " + c.Brand + " 自动发送，请勿直接回复。"
+	}
+	if c.FromName == "" {
+		c.FromName = c.Brand
 	}
 	return c
 }
@@ -197,11 +216,11 @@ func (n *EmailNotifier) Send(ctx context.Context, d notify.Delivery) (notify.Rec
 	textBody := d.Text
 	htmlBody := ""
 	if strings.TrimSpace(d.HTML) != "" {
-		htmlBody = emailShell(d.HTML)
+		htmlBody = emailShell(d.HTML, n.cfg.Brand, n.cfg.Footer)
 	}
 
 	if n.devMode {
-		raw, messageID := buildMIME(devConfig(), to, subject, textBody, htmlBody)
+		raw, messageID := buildMIME(devConfig(n.cfg.Brand), to, subject, textBody, htmlBody)
 		if err := os.MkdirAll(n.outbox, 0o755); err != nil {
 			return notify.Receipt{}, notify.NotReadyf("创建 outbox 目录失败: %v", err)
 		}
@@ -239,7 +258,7 @@ func (n *EmailNotifier) VerifyMessage(to []string) notify.Message {
 	if n.ready && !n.devMode {
 		where = fmt.Sprintf("%s:%d（tls=%s，from=%s）", n.cfg.Host, n.cfg.Port, n.cfg.TLS, n.cfg.From)
 	}
-	body := "这是一封来自课堂状态监控系统通知服务的测试邮件。" +
+	body := "这是一封来自 " + n.cfg.Brand + " 的测试邮件。" +
 		"\n\n当前发件邮箱：" + where +
 		"\n\n收到本邮件说明邮件通道可用。" +
 		"\n\n发送时间：" + time.Now().Format(time.RFC3339)
@@ -247,14 +266,14 @@ func (n *EmailNotifier) VerifyMessage(to []string) notify.Message {
 		Channel: notify.ChannelEmail,
 		To:      to,
 		Type:    "self-test",
-		Subject: "【通知服务】发件邮箱自检",
+		Subject: "【" + n.cfg.Brand + "】发件邮箱自检",
 		Body:    body,
 		Meta:    map[string]string{"kind": "verify"},
 	}
 }
 
-func devConfig() EmailConfig {
-	return EmailConfig{Host: "localhost", From: devFrom, FromName: "通知服务(dev)", TLS: TLSModeNone}
+func devConfig(brand string) EmailConfig {
+	return EmailConfig{Host: "localhost", From: devFrom, FromName: brand + "(dev)", TLS: TLSModeNone}
 }
 
 // ValidateEmailRecipients 校验收件人格式；只接受裸地址（a@b.c），不接受带显示名的写法。

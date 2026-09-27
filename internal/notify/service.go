@@ -36,7 +36,6 @@ type Record struct {
 	Simulated   bool              `json:"simulated,omitempty"`
 	MessageID   string            `json:"messageId,omitempty"`
 	Detail      string            `json:"detail,omitempty"`
-	Template    string            `json:"template,omitempty"`
 	DurationMS  int64             `json:"durationMs"`
 	Meta        map[string]string `json:"meta,omitempty"`
 	Error       string            `json:"error,omitempty"`
@@ -51,21 +50,19 @@ type Recorder interface {
 type Service struct {
 	mu        sync.RWMutex
 	notifiers map[Channel]Notifier
-	templates *Templates
 	resolver  Resolver
 	routes    *RouteTable
 	recorder  Recorder
 	log       *slog.Logger
 }
 
-// NewService 创建统一通知服务。recorder 可为 nil；resolver/routes 为 nil 时按 user 发送不可用。
-func NewService(recorder Recorder, templates *Templates, resolver Resolver, routes *RouteTable, logger *slog.Logger) *Service {
+// NewService 创建通知服务。recorder 可为 nil；resolver/routes 为 nil 时按 user 发送不可用。
+func NewService(recorder Recorder, resolver Resolver, routes *RouteTable, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Service{
 		notifiers: make(map[Channel]Notifier),
-		templates: templates,
 		resolver:  resolver,
 		routes:    routes,
 		recorder:  recorder,
@@ -97,14 +94,6 @@ func (s *Service) Channels() []Status {
 	return out
 }
 
-// Templates 返回全部内置模板定义。
-func (s *Service) Templates() []Template {
-	if s.templates == nil {
-		return nil
-	}
-	return s.templates.List()
-}
-
 // Directory 返回用户目录的描述，用于状态展示与排错。
 func (s *Service) Directory() string {
 	if s.resolver == nil {
@@ -131,13 +120,12 @@ func (s *Service) Send(ctx context.Context, msg Message) (Record, error) {
 	m.Normalize()
 
 	rec := Record{
-		ID:       NewID(),
-		Time:     time.Now(),
-		Type:     m.Type,
-		UserID:   m.User,
-		Template: m.Template,
-		Meta:     m.Meta,
-		Status:   StatusFailed,
+		ID:     NewID(),
+		Time:   time.Now(),
+		Type:   m.Type,
+		UserID: m.User,
+		Meta:   m.Meta,
+		Status: StatusFailed,
 	}
 
 	fail := func(err error) (Record, error) {
@@ -156,29 +144,10 @@ func (s *Service) Send(ctx context.Context, msg Message) (Record, error) {
 		return rec, err
 	}
 
-	// 1. 正文只有一个来源：显式 body 优先，其次由 template + data 生成（产出 Markdown）。
-	bodyFromTemplate := false
-	if m.Template != "" {
-		rendered, err := s.templates.Render(m.Template, m.Data)
-		if err != nil {
-			return fail(err)
-		}
-		if m.Subject == "" {
-			m.Subject = rendered.Subject
-		}
-		if strings.TrimSpace(m.Body) == "" {
-			m.Body = rendered.Markdown
-			bodyFromTemplate = true
-		}
-		rec.Subject = m.Subject
-	}
-	// 调用方没写 bodyFormat 时：模板产出的是 Markdown，其余按纯文本（兼容旧调用）。
+	rec.Subject = m.Subject
+	// 调用方没写 bodyFormat 时按纯文本处理（老调用方只传 body 的行为不变）。
 	if m.BodyFormat == "" {
-		if bodyFromTemplate {
-			m.BodyFormat = BodyFormatMarkdown
-		} else {
-			m.BodyFormat = BodyFormatText
-		}
+		m.BodyFormat = BodyFormatText
 	}
 	rec.BodyFormat = string(m.BodyFormat)
 
