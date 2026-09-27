@@ -165,7 +165,7 @@ func run() error {
 	if *token != "" {
 		logger.Info("已开启 API 鉴权：请求需带 Authorization: Bearer <token>")
 	}
-	logger.Info(`调用示例：POST /api/v1/notify {"user":"202410810316","type":"absence","bodyFormat":"markdown","subject":"缺勤告警","body":"## 考勤异常\n\n- 张三\n- 李四"}`)
+	logger.Info(`调用示例：POST /api/v1/notify {"user":"u1001","type":"absence","bodyFormat":"markdown","subject":"缺勤告警","body":"## 考勤异常\n\n- 张三\n- 李四"}`)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

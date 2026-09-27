@@ -19,7 +19,7 @@ const DefaultUserServicePath = "/api/users/{id}"
 //
 // 约定（用户服务返回 200 + JSON）：
 //
-//	{"id":"202410810316","name":"张三","channels":{"email":"a@qq.com","sms":"13800000000"}}
+//	{"id":"u1001","name":"张三","channels":{"email":"zhangsan@example.com","sms":"13800000000"}}
 //
 // 也兼容把地址直接放在顶层：{"email":"...","sms":"...","phone":"..."}。
 // 用户不存在请返回 404；其它非 2xx 会按上游故障处理（502 upstream_failed）。

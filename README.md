@@ -5,7 +5,7 @@
 调用方只给三样东西：
 
 ```json
-{"user": "202410810316", "type": "absence", "bodyFormat": "markdown",
+{"user": "u1001", "type": "absence", "bodyFormat": "markdown",
  "subject": "缺勤告警", "body": "## 考勤异常\n\n本节课 **2 人** 缺勤"}
 ```
 
@@ -37,7 +37,7 @@
 真实环境变量优先于 `.env`）。复制 `.env.example` 改一改即可。
 
 ```bat
-cd /d D:\notify-service
+cd /d <项目目录>
 copy .env.example .env      :: 填好 NOTIFY_SMTP_* 才会真实投递
 go build -o notify-service.exe .
 notify-service.exe
@@ -71,9 +71,9 @@ INFO 通道状态 channel=sms provider=none mode=unconfigured ready=false
 import requests
 
 requests.post("http://127.0.0.1:8090/api/v1/notify", json={
-    "user": "202410810316",              # 用户 id，地址由通知服务解析
+    "user": "u1001",                     # 用户 id，地址由通知服务解析
     "type": "absence",                   # 通知类型，决定走哪个渠道
-    "subject": "【缺勤告警】24大数据三班 大数据采集",
+    "subject": "【缺勤告警】计算机2301班 大数据采集",
     "bodyFormat": "markdown",
     "body": "## 考勤异常\n\n本节课 **2 人** 缺勤：\n\n- 张三\n- 李四\n\n> 请辅导员核实。",
 }, timeout=20).raise_for_status()
@@ -87,8 +87,8 @@ requests.post("http://127.0.0.1:8090/api/v1/notify", json={
   "record": {
     "id": "ntf_33686a3eb2fdc82b",
     "channel": "email", "provider": "smtp", "status": "sent", "type": "absence",
-    "userId": "202410810316", "userName": "薛涣铄",
-    "to": ["arrowxue@qq.com"], "subject": "【缺勤告警】…",
+    "userId": "u1001", "userName": "张三",
+    "to": ["teacher@example.com"], "subject": "【缺勤告警】…",
     "detail": "已投递至 smtp.qq.com:465", "durationMs": 2961
   }
 }
@@ -115,7 +115,7 @@ requests.post("http://127.0.0.1:8090/api/v1/notify", json={
 ```json
 {
   "users": [
-    {"id": "202410810316", "name": "薛涣铄", "channels": {"email": "a@qq.com", "sms": "13800000000"}},
+    {"id": "u1001", "name": "张三", "channels": {"email": "zhangsan@example.com", "sms": "13800000000"}},
     {"id": "u2002",        "name": "只有手机的学生", "channels": {"sms": "13800000000"}}
   ]
 }
@@ -136,7 +136,7 @@ NOTIFY_USER_SERVICE_TIMEOUT=5
 
 | 情况 | 返回 |
 | --- | --- |
-| 用户存在 | `200` + `{"id":"202410810316","name":"张三","channels":{"email":"a@qq.com","sms":"13800000000"}}` |
+| 用户存在 | `200` + `{"id":"u1001","name":"张三","channels":{"email":"zhangsan@example.com","sms":"13800000000"}}` |
 | 用户不存在 | `404` |
 | 其它错误 | 非 2xx → 通知服务按 502 `upstream_failed` 记错，不会误发 |
 
@@ -198,7 +198,7 @@ NOTIFY_ROUTES=absence=email,sms;head-up-rate=email;attendance-summary=email;defa
 
 // ② 由内置模板生成（模板内部产出 Markdown，字段缺失会 400 并列出所需字段）
 {"user":"u1","type":"absence","template":"absence-alert",
- "data":{"ClassName":"24大数据三班","CourseName":"大数据采集","TimeRange":"2026-09-26 08:00-09:40",
+ "data":{"ClassName":"计算机2301班","CourseName":"大数据采集","TimeRange":"2026-09-26 08:00-09:40",
          "StudentNames":"张三、李四","AbsentCount":2,"TotalCount":46}}
 ```
 

@@ -21,7 +21,7 @@ import (
 //
 // 文件格式（两种都支持）：
 //
-//	{"users": [{"id":"202410810316","name":"张三","channels":{"email":"a@qq.com","sms":"13800000000"}}]}
+//	{"users": [{"id":"u1001","name":"张三","channels":{"email":"zhangsan@example.com","sms":"13800000000"}}]}
 //	[{"id":"...","channels":{...}}]
 type FileResolver struct {
 	path string

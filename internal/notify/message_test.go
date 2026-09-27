@@ -92,7 +92,7 @@ func TestTemplateProducesMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered, err := templates.Render("absence-alert", map[string]any{
-		"ClassName": "24大数据三班", "CourseName": "大数据采集", "TimeRange": "08:00-09:40",
+		"ClassName": "计算机2301班", "CourseName": "大数据采集", "TimeRange": "08:00-09:40",
 		"StudentNames": "张三、李四", "AbsentCount": 2, "TotalCount": 46,
 	})
 	if err != nil {

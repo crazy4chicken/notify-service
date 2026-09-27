@@ -126,20 +126,20 @@ func TestSendRoutesUserToEmail(t *testing.T) {
 	email := &fakeNotifier{name: ChannelEmail, ready: true}
 	sms := &fakeNotifier{name: ChannelSMS, ready: false, mode: "unconfigured"}
 	resolver := &fakeResolver{users: map[string]User{
-		"202410810316": {ID: "202410810316", Name: "张三", Channels: map[string]string{"email": "zhangsan@qq.com"}},
+		"u1001": {ID: "u1001", Name: "张三", Channels: map[string]string{"email": "zhangsan@example.com"}},
 	}}
 	svc, _ := newTestService(t, "absence=email,sms", resolver, email, sms)
 
 	rec, err := svc.Send(context.Background(), Message{
-		User: "202410810316", Type: "absence", Body: "本班 **3 人** 缺勤", BodyFormat: BodyFormatMarkdown,
+		User: "u1001", Type: "absence", Body: "本班 **3 人** 缺勤", BodyFormat: BodyFormatMarkdown,
 	})
 	if err != nil {
 		t.Fatalf("发送失败: %v", err)
 	}
-	if rec.Channel != ChannelEmail || rec.UserID != "202410810316" || rec.UserName != "张三" {
+	if rec.Channel != ChannelEmail || rec.UserID != "u1001" || rec.UserName != "张三" {
 		t.Errorf("记录不对: %+v", rec)
 	}
-	if len(email.sent) != 1 || email.sent[0].To[0] != "zhangsan@qq.com" {
+	if len(email.sent) != 1 || email.sent[0].To[0] != "zhangsan@example.com" {
 		t.Fatalf("邮件未按用户地址发出: %+v", email.sent)
 	}
 	if rec.Status != StatusSent {
