@@ -17,8 +17,10 @@
   裸 HTML 会被拒绝，且内容先整体转义再解析，调用方文本无法注入标签。
 - 追加写入的 JSONL 投递记录，可按渠道、类型、状态、用户 id 查询；失败同样记录原因。
 - 配置只来自环境变量（存在 `.env` 时读取，真实环境变量优先）。没有配置接口，没有数据库。
-- `/api/*` 可选静态 Bearer Token；对浏览器客户端开放 CORS；含 panic 恢复中间件与优雅退出。
-- 零第三方依赖——只用 Go 标准库——编译为单个自包含可执行文件。
+- `/api/*` 鉴权两选一：静态 Bearer Token，或配置 teamusers（IAM）后改由 JWT + 权限校验接管
+  （401/403 语义，`NOTIFY_TEAMUSERS_URL`）；对浏览器客户端开放 CORS；含 panic 恢复中间件与优雅退出。
+- 除官方 teamusers SDK（`github.com/crazy4chicken/nsc-teamusers/sdk/go`，只在启用 IAM 鉴权时用到）
+  外零第三方依赖，编译为单个自包含可执行文件。
 
 ## 本地开发
 
@@ -63,7 +65,13 @@ curl -fsS -X POST http://127.0.0.1:8090/api/v1/notify \
 | `NOTIFY_MAIL_FOOTER` | 自动生成 | 邮件外壳页脚文案 |
 | `NOTIFY_ADDR` | `127.0.0.1:8090` | 监听地址；`0.0.0.0:8090` 供外部访问 |
 | `NOTIFY_DATA_DIR` | `data` | 投递记录、默认用户表、outbox |
-| `NOTIFY_TOKEN` | 空 | 设置后 `/api/*` 需要 `Authorization: Bearer <token>` |
+| `NOTIFY_TOKEN` | 空 | 静态 Token；设置后 `/api/*` 需要 `Authorization: Bearer <token>`。仅在未配置 `NOTIFY_TEAMUSERS_URL` 时生效 |
+| `NOTIFY_TEAMUSERS_URL` | 空 | teamusers 服务地址；设置后由 teamusers 接管 `/api/*` 鉴权（JWT + 权限校验） |
+| `NOTIFY_TEAMUSERS_AUDIENCE` | `teamusers` | 期望的 JWT `aud` |
+| `NOTIFY_TEAMUSERS_SERVICE_TOKEN` | 必填 | 查询用户权限用的服务 Bearer Token；缺失时拒绝启动 |
+| `NOTIFY_TEAMUSERS_TIMEOUT` | `5` | JWKS 与权限接口超时（秒） |
+| `NOTIFY_TEAMUSERS_PERMISSION_SEND` | `msghub:send:any` | 发送类接口要求的权限 |
+| `NOTIFY_TEAMUSERS_PERMISSION_READ` | `msghub:read:any` | 查询类接口要求的权限 |
 | `NOTIFY_LOG_LEVEL` | `info` | 设为 `debug` 会打印每个 HTTP 请求 |
 | `NOTIFY_SMTP_HOST` | 空 | 发件邮箱 SMTP 服务器 |
 | `NOTIFY_SMTP_PORT` | `587` | QQ/163 等用 `465` |
@@ -82,6 +90,22 @@ curl -fsS -X POST http://127.0.0.1:8090/api/v1/notify \
 | `NOTIFY_DEV_OUTBOX` | `0` | 设为 `1` 把邮件写进 outbox 而不投递 |
 
 命令行参数覆盖常用项：`-brand`、`-addr`、`-data`、`-token`、`-log-level`。
+
+## 鉴权
+
+默认不鉴权（本地开发）。设 `NOTIFY_TOKEN` 后 `/api/*` 需要静态 Bearer Token（也接受
+`X-Notify-Token` 头）。配置 `NOTIFY_TEAMUSERS_URL` 后改由 teamusers 接管：`/api/*` 必须带
+teamusers 签发的 JWT（`Authorization: Bearer <JWT>`），缺失或校验失败返回 401 `unauthorized`；
+已知接口再校验权限，权限不足返回 403 `forbidden`（消息里带所需权限与 SDK 给出的原因）：
+
+| 权限（默认值） | 覆盖的接口 |
+| --- | --- |
+| `NOTIFY_TEAMUSERS_PERMISSION_SEND`（`msghub:send:any`） | `POST /api/v1/notify`、`POST /api/v1/channels/email/verify` |
+| `NOTIFY_TEAMUSERS_PERMISSION_READ`（`msghub:read:any`） | `GET /api/v1/channels`、`GET /api/v1/notifications`、`GET /api/v1/notifications/{id}` |
+
+`/healthz` 与测试页面保持公开；未命中的 `/api/` 路径只要求认证，随后照旧 404。此时
+`NOTIFY_TOKEN` 被忽略（启动日志会给出警告），`NOTIFY_TEAMUSERS_SERVICE_TOKEN` 用于向 teamusers
+查询用户权限，缺失时服务拒绝启动。
 
 ## API
 
@@ -119,6 +143,8 @@ curl -fsS -X POST http://127.0.0.1:8090/api/v1/notify \
 | kind | HTTP | 含义 |
 | --- | --- | --- |
 | `invalid_request` | 400 | 参数非法、两种收件人形式同时出现、Markdown 正文含裸 HTML |
+| `unauthorized` | 401 | 缺少或错误的凭证（静态 Token，或 teamusers JWT 缺失/校验失败） |
+| `forbidden` | 403 | teamusers 权限不足（消息里带所需权限与原因） |
 | `not_found` | 404 | 通道或记录不存在，或用户在该路由上没有收件地址 |
 | `channel_not_ready` | 503 | 通道未配置、路由没有可用通道、未配置用户目录 |
 | `upstream_failed` | 502 | 用户服务出错或返回不可用的数据 |

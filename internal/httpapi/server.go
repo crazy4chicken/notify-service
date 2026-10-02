@@ -27,6 +27,7 @@ type Options struct {
 	Email   *channel.EmailNotifier
 	WebDir  string
 	Token   string
+	Auth    *TeamusersAuth // 非空时 /api/* 走 teamusers 鉴权，Token 被忽略
 	Version string
 	Logger  *slog.Logger
 }
@@ -38,6 +39,7 @@ type Server struct {
 	email   *channel.EmailNotifier
 	webDir  string
 	token   string
+	auth    *TeamusersAuth
 	version string
 	log     *slog.Logger
 	started time.Time
@@ -56,6 +58,7 @@ func NewServer(opt Options) *Server {
 		email:   opt.Email,
 		webDir:  opt.WebDir,
 		token:   opt.Token,
+		auth:    opt.Auth,
 		version: opt.Version,
 		log:     logger,
 		started: time.Now(),
@@ -290,7 +293,7 @@ func httpStatus(err error) (int, string) {
 }
 
 func (s *Server) authenticate(next http.Handler) http.Handler {
-	if s.token == "" {
+	if s.auth == nil && s.token == "" {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,18 +301,45 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if s.auth != nil {
+			s.authenticateTeamusers(next, w, r)
+			return
+		}
 		got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if got == "" {
 			got = strings.TrimSpace(r.Header.Get("X-Notify-Token"))
 		}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{
-				"error": map[string]any{"kind": "unauthorized", "message": "缺少或错误的 API Token（Authorization: Bearer <token>）"},
-			})
+			writeAuthError(w, http.StatusUnauthorized, "unauthorized", "缺少或错误的 API Token（Authorization: Bearer <token>）")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authenticateTeamusers 校验 teamusers JWT，并按已知路由追加权限校验。
+func (s *Server) authenticateTeamusers(next http.Handler, w http.ResponseWriter, r *http.Request) {
+	raw, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		writeAuthError(w, http.StatusUnauthorized, "unauthorized", "缺少 Authorization: Bearer <JWT>")
+		return
+	}
+	claims, err := s.auth.Verify(r.Context(), raw)
+	if err != nil {
+		s.log.Debug("JWT 校验失败", "err", err)
+		writeAuthError(w, http.StatusUnauthorized, "unauthorized", "JWT 无效或已过期")
+		return
+	}
+	permission := s.auth.RequiredPermission(r.Method, r.URL.Path)
+	if permission == "" {
+		next.ServeHTTP(w, r)
+		return
+	}
+	if allowed, reason := s.auth.Allow(r.Context(), claims, permission); !allowed {
+		writeAuthError(w, http.StatusForbidden, "forbidden", fmt.Sprintf("权限不足：需要 %s（%s）", permission, reason))
+		return
+	}
+	next.ServeHTTP(w, r)
 }
 
 func cors(next http.Handler) http.Handler {

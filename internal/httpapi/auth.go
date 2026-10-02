@@ -1,0 +1,91 @@
+package httpapi
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	iam "github.com/crazy4chicken/nsc-teamusers/sdk/go"
+)
+
+// TeamusersOptions 是构造 TeamusersAuth 所需的配置，由 main 从环境变量读取。
+type TeamusersOptions struct {
+	BaseURL        string        // teamusers 服务基址，例如 http://127.0.0.1:8080
+	Audience       string        // 期望的 JWT aud
+	ServiceToken   string        // 服务侧 Bearer Token，用于查询用户权限
+	Timeout        time.Duration // JWKS 与权限接口的 HTTP 超时
+	PermissionSend string        // 发送类接口要求的权限
+	PermissionRead string        // 查询类接口要求的权限
+}
+
+// TeamusersAuth 封装 teamusers 的 JWT 校验器与权限客户端。
+// 配置后 /api/* 只认 teamusers 签发的 JWT，静态 Token 不再参与鉴权。
+type TeamusersAuth struct {
+	verifier       *iam.Verifier
+	client         *iam.Client
+	permissionSend string
+	permissionRead string
+}
+
+// NewTeamusersAuth 构造 teamusers 鉴权组件；校验器与权限客户端共用一个带超时的 HTTP 客户端。
+func NewTeamusersAuth(opt TeamusersOptions) *TeamusersAuth {
+	httpClient := &http.Client{Timeout: opt.Timeout}
+	verifier := iam.NewVerifier(opt.BaseURL,
+		iam.WithHTTPClient(httpClient),
+		iam.WithAudience(opt.Audience),
+	)
+	permissions := iam.NewPermissionsClient(opt.BaseURL,
+		iam.WithHTTPClient(httpClient),
+		iam.WithServiceToken(opt.ServiceToken),
+	)
+	return &TeamusersAuth{
+		verifier:       verifier,
+		client:         iam.NewClient(verifier, permissions),
+		permissionSend: opt.PermissionSend,
+		permissionRead: opt.PermissionRead,
+	}
+}
+
+// Verify 校验 Bearer JWT 并返回其中的身份声明。
+func (a *TeamusersAuth) Verify(ctx context.Context, raw string) (iam.Claims, error) {
+	return a.verifier.Verify(ctx, raw)
+}
+
+// Allow 判断 claims 是否具备 permission；拒绝时返回 SDK 给出的原因。
+func (a *TeamusersAuth) Allow(ctx context.Context, claims iam.Claims, permission string) (bool, string) {
+	return a.client.Allow(ctx, claims, permission, iam.Resource{})
+}
+
+// RequiredPermission 返回已知路由要求的权限；空串表示只需认证（未命中的 /api/ 路径照旧 404）。
+func (a *TeamusersAuth) RequiredPermission(method, path string) string {
+	switch {
+	case method == http.MethodPost && (path == "/api/v1/notify" || path == "/api/v1/channels/email/verify"):
+		return a.permissionSend
+	case method == http.MethodGet && (path == "/api/v1/channels" || path == "/api/v1/notifications" || strings.HasPrefix(path, "/api/v1/notifications/")):
+		return a.permissionRead
+	default:
+		return ""
+	}
+}
+
+// Close 停止 JWKS 缓存的后台刷新。
+func (a *TeamusersAuth) Close() error {
+	return a.verifier.Close()
+}
+
+// bearerToken 从 Authorization 头解析 Bearer JWT；与 SDK 一致，Bearer 前缀大小写不敏感。
+func bearerToken(header string) (string, bool) {
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+// writeAuthError 输出鉴权错误信封，与业务错误的 {"error":{"kind","message"}} 同形。
+func writeAuthError(w http.ResponseWriter, status int, kind, message string) {
+	writeJSON(w, status, map[string]any{
+		"error": map[string]any{"kind": kind, "message": message},
+	})
+}

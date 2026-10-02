@@ -118,12 +118,35 @@ func run() error {
 		return err
 	}
 
+	// teamusers 鉴权：配置了 NOTIFY_TEAMUSERS_URL 就由 teamusers 接管 /api/* 鉴权，静态 Token 退场。
+	teamusersURL := strings.TrimSpace(envStr("NOTIFY_TEAMUSERS_URL", ""))
+	teamusersAudience := envStr("NOTIFY_TEAMUSERS_AUDIENCE", "teamusers")
+	teamusersPermSend := envStr("NOTIFY_TEAMUSERS_PERMISSION_SEND", "msghub:send:any")
+	teamusersPermRead := envStr("NOTIFY_TEAMUSERS_PERMISSION_READ", "msghub:read:any")
+	var teamusersAuth *httpapi.TeamusersAuth
+	if teamusersURL != "" {
+		serviceToken := strings.TrimSpace(envStr("NOTIFY_TEAMUSERS_SERVICE_TOKEN", ""))
+		if serviceToken == "" {
+			return fmt.Errorf("NOTIFY_TEAMUSERS_URL 已设置，但缺少 NOTIFY_TEAMUSERS_SERVICE_TOKEN")
+		}
+		teamusersAuth = httpapi.NewTeamusersAuth(httpapi.TeamusersOptions{
+			BaseURL:        teamusersURL,
+			Audience:       teamusersAudience,
+			ServiceToken:   serviceToken,
+			Timeout:        time.Duration(envInt("NOTIFY_TEAMUSERS_TIMEOUT", 5)) * time.Second,
+			PermissionSend: teamusersPermSend,
+			PermissionRead: teamusersPermRead,
+		})
+		defer teamusersAuth.Close()
+	}
+
 	api := httpapi.NewServer(httpapi.Options{
 		Service: svc,
 		Store:   records,
 		Email:   emailNotifier,
 		WebDir:  pageDir,
 		Token:   *token,
+		Auth:    teamusersAuth,
 		Version: version,
 		Logger:  logger,
 	})
@@ -159,7 +182,17 @@ func run() error {
 	default:
 		logger.Info("未找到测试页面，API 不受影响", "expected", filepath.Join(pageDir, "index.html"))
 	}
-	if *token != "" {
+	switch {
+	case teamusersAuth != nil:
+		if *token != "" {
+			logger.Warn("NOTIFY_TOKEN 被忽略：NOTIFY_TEAMUSERS_URL 已设置，/api/* 改由 teamusers JWT 鉴权")
+		}
+		logger.Info("已开启 teamusers 鉴权",
+			"url", teamusersURL,
+			"audience", teamusersAudience,
+			"sendPermission", teamusersPermSend,
+			"readPermission", teamusersPermRead)
+	case *token != "":
 		logger.Info("已开启 API 鉴权：请求需带 Authorization: Bearer <token>")
 	}
 	logger.Info(`调用示例：POST /api/v1/notify {"user":"u1001","type":"alert","bodyFormat":"markdown","subject":"部署完成","body":"## 部署完成\n\n- 服务 **v1.2.3** 已上线"}`)
