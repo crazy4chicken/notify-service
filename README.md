@@ -57,6 +57,11 @@ curl -fsS -X POST http://127.0.0.1:8090/api/v1/notify \
 `NOTIFY_DEV_OUTBOX=1` 会把邮件写进 `data/outbox/*.eml` 而不投递，设 `NOTIFY_SMS_SIMULATE=1`
 会把短信写进 `data/outbox/sms.log`。两个开关都不改变 API。
 
+## 部署
+
+生产环境用 systemd 直接运行或交给 svchost 托管；发布产物契约、compose 示例、鉴权与升级/回滚步骤见
+[docs/deploy.md](docs/deploy.md)。
+
 ## 配置
 
 | 变量 | 默认 | 用途 |
