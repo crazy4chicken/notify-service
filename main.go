@@ -30,7 +30,8 @@ import (
 	"notify-service/internal/store"
 )
 
-const version = "0.3.0"
+// version 由发布流程通过 -ldflags "-X main.version=$TAG" 注入；直接构建时为下面这个默认值。
+var version = "0.3.0"
 
 func main() {
 	if err := run(); err != nil {
